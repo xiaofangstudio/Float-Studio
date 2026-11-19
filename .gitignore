@@ -1,0 +1,22 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.local
+
+# 无头验证遗留
+.edgeprof*/
+_selftest-dom.html
+_check-*.png
+tests/.lt/
+tests/.build.mjs
+tests/.idx.mjs
+tests/.stress.mjs
+tests/.bench.mjs
+tests/.compl.mjs
+tests/.ctx.mjs
+tests/.tc.mjs
+tests/.ptr.mjs
+tests/.pw.mjs
+tests/.stdlib.mjs
+tests/.tut.mjs
