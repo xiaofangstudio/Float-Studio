@@ -409,9 +409,71 @@ export function registerCuiLanguage(): void {
     }
   });
 
+  /* ── 颜色：十六进制色值变成色块，点开就是取色器（色相 / 饱和度 / 明度） ── */
+  type Rgba = { red: number; green: number; blue: number; alpha: number };
+  const parseHex = (hex: string): Rgba | null => {
+    let h = hex.replace(/^#/, '');
+    if (h.length === 3 || h.length === 4) h = h.split('').map((c) => c + c).join('');
+    if (h.length !== 6 && h.length !== 8) return null;
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+    const a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    return { red: r, green: g, blue: b, alpha: a };
+  };
+
+  const toHex = (c: Rgba): string => {
+    const h = (n: number): string => Math.round(n * 255).toString(16).padStart(2, '0');
+    return `#${h(c.red)}${h(c.green)}${h(c.blue)}${c.alpha < 1 ? h(c.alpha) : ''}`;
+  };
+
+  monaco.languages.registerColorProvider(CUI_LANG, {
+    provideDocumentColors(model) {
+      const out: monaco.languages.IColorInformation[] = [];
+      const text = model.getValue();
+      /* 超大 .cui 保护：装饰器上限 2000 个，超过就不再扫。
+         几万个色块本来也看不清，继续扫只会拖慢每一次输入。 */
+      const MAX = 2000;
+      const re = /#[0-9a-fA-F]{3,8}\b/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        if (out.length >= MAX) break;
+        const color = parseHex(m[0]);
+        if (!color) continue;
+        const start = model.getPositionAt(m.index);
+        const end = model.getPositionAt(m.index + m[0].length);
+        out.push({ color, range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column) });
+      }
+      return out;
+    },
+    provideColorPresentations(_model, info) {
+      return [{ label: toHex(info.color) }];
+    }
+  });
+
   /* ── 悬停文档 ── */
   monaco.languages.registerHoverProvider(CUI_LANG, {
     provideHover(model, position) {
+      /* 十六进制色值：悬停给色值、RGB 与操作提示；色块点击出取色器 */
+      const lineText = model.getLineContent(position.lineNumber);
+      const hexRe = /#([0-9a-fA-F]{3,8})\b/g;
+      let hm: RegExpExecArray | null;
+      while ((hm = hexRe.exec(lineText)) !== null) {
+        const from = hm.index + 1;
+        const to = hm.index + hm[0].length + 1;
+        if (position.column < from || position.column > to) continue;
+        const c = parseHex(hm[0]);
+        if (!c) break;
+        const rgb = [Math.round(c.red * 255), Math.round(c.green * 255), Math.round(c.blue * 255)].join(', ');
+        return {
+          contents: [
+            { value: `**颜色** \`${hm[0]}\`` },
+            { value: `rgb(${rgb})${c.alpha < 1 ? ` · 透明度 ${Math.round(c.alpha * 100)}%` : ''}` },
+            { value: '点左侧色块可打开取色器：色相、饱和度、明度都能直接拖。' }
+          ]
+        };
+      }
+
       const word = model.getWordAtPosition(position);
       if (!word) return null;
       const w = word.word;
@@ -453,3 +515,4 @@ export function registerCuiLanguage(): void {
     }
   });
 }
+

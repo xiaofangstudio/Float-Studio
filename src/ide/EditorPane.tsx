@@ -363,6 +363,9 @@ export function EditorPane({ projectDir, bus, onSaved, onDirtyChange, breakpoint
       wordWrap: st.wordWrap ? 'on' : 'off',
       fontFamily: 'Consolas, "Courier New", monospace',
       minimap: { enabled: false },
+      /* 超大文件：关掉整篇 token 化的高成本路径，只按可见区域处理 */
+      largeFileOptimizations: true,
+      maxTokenizationLineLength: 30000,
       scrollBeyondLastLine: false,
       padding: { top: 10 },
       glyphMargin: true,

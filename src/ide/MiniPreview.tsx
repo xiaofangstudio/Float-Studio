@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { compileCui } from '@fangui/cui/compile';
+import { compileDocument } from '@fangui/cui/compile';
 import { parseCui } from '@fangui/cui/parser';
 import { buildCuiTree, renderCuiTree } from '@fangui/cui/tree';
 import { attachCuiRuntime } from '@fangui/cui/runtime';
@@ -46,10 +46,12 @@ export type MiniPreviewProps = {
 };
 
 export function MiniPreview({ code, html, script, height = 200 }: MiniPreviewProps): React.ReactElement {
-  const compiled = useMemo(() => compileCui(code), [code]);
+  /* 一份 AST 同时给编译与建树，模板缩略图多的时候不做重复解析 */
+  const doc = useMemo(() => parseCui(code), [code]);
+  const compiled = useMemo(() => compileDocument(doc), [doc]);
   const bodyHtml = useMemo(
-    () => html ?? renderCuiTree(buildCuiTree(parseCui(code))),
-    [code, html]
+    () => html ?? renderCuiTree(buildCuiTree(doc)),
+    [doc, html]
   );
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [ready, setReady] = useState(false);

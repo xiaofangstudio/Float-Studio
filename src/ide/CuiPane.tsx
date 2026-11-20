@@ -1,19 +1,18 @@
 /* 工程里的 Copper UI 工作台：左边预览（能点、能操作），右边/下面是属性检查器。
  *
  * 三件事在这里合上：
- *  1. 编译：优先走 Rust 内核（api.cuiCompile），没有内核就回退 TS 版；
+ *  1. 编译：TS 编译器在本地跑，一份 AST 同时喂给编译与建树（大文件不再重复解析）；
  *  2. 互动：把 `when click` + `act` 编译出来的 behaviors 挂到 iframe 上，点一下真的会动；
  *     act call 会调 app/*.co 里的 Copper 函数（page.* 操作预览里的界面）；
  *  3. 可视化编辑：点预览里的元素 → 选中对应规则 → 改个值 → 源码自己更新。
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { compileCui } from '@fangui/cui/compile';
+import { compileDocument } from '@fangui/cui/compile';
 import { parseCui } from '@fangui/cui/parser';
 import { buildCuiTree, renderCuiTree } from '@fangui/cui/tree';
 import { attachCuiRuntime } from '@fangui/cui/runtime';
 import { findRuleForPick, valueText, type CuiPick } from './patch';
-import type { CuiCompileResult } from '@fangui/cui/ast';
 import { BASE_CSS, TOKEN_CSS } from '@fangui/cui/sample';
 import { api, isTauriEnv } from '../core/tauri';
 import type { CopperEnvInfo } from '../core/tauri';
@@ -66,11 +65,34 @@ export function CuiPane({ code, preview, frameKey, onPatch }: CuiPaneProps): Rea
     void api.copperEnvInfo().then((v) => { if (alive) setEnv(v); }).catch(() => {});
     return () => { alive = false; };
   }, []);
-  const [result, setResult] = useState<CuiCompileResult>(() => compileCui(code));
+  /* 大工程的关键：一次解析，编译与建树共用同一份 AST。
+   * 以前每敲一个字要 parse 两次、compile 一次、build 一次；400KB 的 .cui 会掉帧。
+   * 合并渲染：不是等停手才画，而是把这一小段时间内的多次输入并成一次重算——
+   * 普通文件最多 48ms 一批，超过 200KB 的文件最多 120ms 一批，边敲边更新，
+   * 也不会每敲一个字就把整个预览重建一遍。 */
+  const [heavyCode, setHeavyCode] = useState(code);
+  const latestCode = useRef(code);
+  const renderTimer = useRef<number | null>(null);
+  const lastRender = useRef(0);
+  useEffect(() => {
+    latestCode.current = code;
+    if (renderTimer.current !== null) return; // 已经排好一批，后来的输入并进去
+    const gap = code.length > 200_000 ? 120 : 48;
+    const wait = Math.max(0, gap - (performance.now() - lastRender.current));
+    renderTimer.current = window.setTimeout(() => {
+      renderTimer.current = null;
+      lastRender.current = performance.now();
+      setHeavyCode(latestCode.current);
+    }, wait);
+  }, [code]);
+  useEffect(() => () => {
+    if (renderTimer.current !== null) window.clearTimeout(renderTimer.current);
+  }, []);
+  const doc = useMemo(() => parseCui(heavyCode), [heavyCode]);
+  const result = useMemo(() => compileDocument(doc), [doc]);
 
-  /* 界面结构由 .cui 自己长出来：一条规则 = 一个元件。
-   * 只有结构真的变了才重建 iframe（改颜色不会打断预览里的交互）。 */
-  const tree = useMemo(() => buildCuiTree(parseCui(code)), [code]);
+  /* 界面结构由 .cui 自己长出来：一条规则 = 一个元件。 */
+  const tree = useMemo(() => buildCuiTree(doc), [doc]);
   const treeHtml = useMemo(() => renderCuiTree(tree), [tree]);
 
   const toastTimer = useRef<number | null>(null);
@@ -79,44 +101,6 @@ export function CuiPane({ code, preview, frameKey, onPatch }: CuiPaneProps): Rea
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(''), 1800);
   }, []);
-
-  /* 序号防竞态：敲得快时只认最后一次的结果。
-   *
-   * 有 act / when click 的时候直接走 TS 编译器：Rust 内核目前只认样式，
-   * 让它去解释行为行只会多出一堆无意义诊断。纯样式文件仍然优先问内核。 */
-  const seqRef = useRef(0);
-  useEffect(() => {
-    const seq = ++seqRef.current;
-    const ts = compileCui(code);
-
-    const hasLogic = ts.behaviors.length > 0 || /when\s+(click|input|change|submit|enter)/i.test(code);
-    if (hasLogic) {
-      setResult(ts);
-      return;
-    }
-
-    let alive = true;
-    void (async () => {
-      try {
-        const r = await api.cuiCompile(code);
-        if (!alive || seq !== seqRef.current) return;
-        setResult({
-          css: r.css,
-          diags: r.diags,
-          behaviors: [],
-          texts: r.texts,
-          imgs: r.imgs,
-          hints: [],
-          declCount: r.decl_count,
-          ruleCount: r.rule_count
-        });
-      } catch {
-        if (!alive || seq !== seqRef.current) return;
-        setResult(ts);
-      }
-    })();
-    return () => { alive = false; };
-  }, [code]);
 
   /* 交互脚本不能写成内联 <script>：
    * Tauri 会把自带初始化脚本的 sha256 塞进 CSP 的 script-src，而按 CSP 规范，
@@ -139,15 +123,9 @@ export function CuiPane({ code, preview, frameKey, onPatch }: CuiPaneProps): Rea
     if (!d) return;
     const style = d.getElementById('cui-style');
     if (style) style.textContent = result.css;
-    for (const t of result.texts) {
-      try { d.querySelectorAll(t.sel).forEach((el) => { el.textContent = t.text; }); } catch { /* 选择器无效就跳过 */ }
-    }
-    for (const im of result.imgs) {
-      try { d.querySelectorAll(im.sel).forEach((el) => { el.setAttribute('src', im.src); }); } catch { /* 同上 */ }
-    }
-    for (const h of result.hints) {
-      try { d.querySelectorAll(h.sel).forEach((el) => { el.setAttribute('placeholder', h.text); }); } catch { /* 同上 */ }
-    }
+    /* text / src / hint 已经在 renderCuiTree 里写进 HTML 了。
+       以前这里再按 6001 条选择器逐条 querySelectorAll，等于 O(n²)：
+       6000 个元件的大工程光这一步就要好几秒，预览像卡死。 */
   }, [result]);
 
   useEffect(() => {
@@ -228,8 +206,8 @@ export function CuiPane({ code, preview, frameKey, onPatch }: CuiPaneProps): Rea
   useEffect(() => { setReady(false); setPick(null); }, [frameKey]);
 
   const matched = useMemo(
-    () => (pick ? findRuleForPick(parseCui(code), pick) : null),
-    [code, pick]
+    () => (pick ? findRuleForPick(doc, pick) : null),
+    [doc, pick]
   );
 
   const commit = useCallback((prop: string, raw: string): void => {

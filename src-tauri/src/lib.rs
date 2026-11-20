@@ -2,6 +2,7 @@ pub mod commands;
 pub mod startup;
 
 use commands::terminal::PtyState;
+use tauri::Emitter;
 use tauri::Manager;
 
 pub struct AppState {
@@ -41,6 +42,23 @@ fn install_crash_log() {
 pub fn run() {
     install_crash_log();
     tauri::Builder::default()
+        /* 单实例：双击 .co / .cui 时 Windows 会再起一个 exe，两个 WebView2 抢同一个
+           用户数据目录 → 渲染进程直接被干掉（表现就是"加载到一半闪退"）。
+           第二个实例只负责把路径递给已在跑的那个窗口，然后自己退出。 */
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+            if let Some(p) = argv
+                .iter()
+                .skip(1)
+                .find(|a| !a.starts_with('-') && std::path::Path::new(a.as_str()).exists())
+            {
+                let _ = app.emit("float://open-path", p.clone());
+            }
+        }))
         .manage(AppState { ptys: PtyState::new() })
         .manage(commands::mcp::McpState::new())
         .invoke_handler(tauri::generate_handler![

@@ -2434,9 +2434,13 @@ html, body, #root {
 .build-dialog-foot button.primary:hover:not(:disabled) { filter: brightness(1.06); }
 .build-dialog-foot button:disabled, .build-dialog-dir button:disabled { opacity: .55; cursor: default; }
 
-/* ── 新建工程：模板一横排，分类小标题压在卡片顶上 ── */
+/* ── 新建工程：模板三列一排，超出就上下滚 ── */
+.npd { width: 660px; }
 .npd-tpls {
-  display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch;
   gap: 10px; padding: 14px 16px 12px;
-  overflow-x: auto; overflow-y: hidden;
+  max-height: 420px; overflow-y: auto; overflow-x: hidden;
 }
+.npd-tpl { width: auto; flex: none; }
+.npd-thumb { height: 74px; }
+

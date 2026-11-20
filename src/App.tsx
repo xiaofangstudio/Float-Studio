@@ -102,6 +102,21 @@ export default function App() {
     setPage({ kind: 'ws', dir, openFile });
   }, []);
 
+  /* 第二个实例（双击 .co/.cui 或再从桌面点开）会把路径递过来：
+   * 主实例收到就直接切过去，不再自己起一个 WebView2 抢用户数据目录。 */
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    let un: (() => void) | undefined;
+    void import('@tauri-apps/api/event')
+      .then((m) => m.listen<string>('float://open-path', (e) => {
+        if (alive && e.payload) openTarget(e.payload);
+      }))
+      .then((fn) => { un = fn; })
+      .catch(() => { /* 事件系统不可用时不影响主流程 */ });
+    return () => { alive = false; un?.(); };
+  }, [openTarget]);
+
   const onLoadingDone = useCallback(() => {
     if (startup) openTarget(startup);
     else setPage({ kind: 'welcome' });

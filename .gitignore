@@ -3,6 +3,8 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 *.local
+*.bak
+*.bak-*
 
 # 无头验证遗留
 .edgeprof*/
