@@ -105,7 +105,6 @@ export function MiniPreview({ code, html, script, height = 200 }: MiniPreviewPro
         onLoad={() => { setReady(true); apply(); }}
       />
       <div className="tut-view-foot">
-        {compiled.ruleCount} 条规则 · {compiled.declCount} 条属性
         {compiled.diags.length > 0 && <span className="tut-view-warn">{compiled.diags.length} 条提示</span>}
       </div>
     </div>

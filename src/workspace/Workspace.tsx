@@ -25,6 +25,7 @@ import { IconPlug, IconServer, IconBook, IconKeyboard, IconLayers } from '../ui/
 import { TutorialPage } from '../docs/TutorialPage';
 import { Splitter } from '../ide/Splitter';
 import { CuiPane } from '../ide/CuiPane';
+import type { CuiPreviewData } from '../ide/CuiPane';
 import { findRuleForPick, patchCuiProp, type CuiPick } from '../ide/patch';
 import { parseCui } from '@fangui/cui/parser';
 import { previewForCui } from '../core/templates';
@@ -75,6 +76,28 @@ export function Workspace({ projectDir, initialFile, onOpenTarget, onExit }: Pro
    * entrySrc/entryFile 只是"编辑器还没打开任何文件"时的兜底（工程刚打开那一瞬间）。 */
   const [panelFile, setPanelFile] = useState('');
   const [panelSrc, setPanelSrc] = useState('');
+  /* 预览专用：每次输入立即更新。大纲/索引还走上面的 280ms 合并，
+     否则 36k 行的大文件每敲一个字都要重算一次大纲。 */
+  const [previewSrc, setPreviewSrc] = useState('');
+  /* 预览样例数据：工程里放 preview.json 或 .float/preview.json，
+     填 {{占位}}、给图片内嵌地址、标横屏/竖屏。没有这个文件就按默认 16:9 空数据预览。 */
+  const [previewData, setPreviewData] = useState<CuiPreviewData | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    const root = projectDir.replace(/\\/g, '/').replace(/\/+$/, '');
+    void (async () => {
+      for (const p of [root + '/.float/preview.json', root + '/preview.json']) {
+        try {
+          const raw = await api.fsRead(p);
+          const parsed = JSON.parse(raw.replace(/^\uFEFF/, '')) as CuiPreviewData;
+          if (alive) setPreviewData(parsed);
+          return;
+        } catch { /* 没这个文件就继续找下一个 */ }
+      }
+      if (alive) setPreviewData(undefined);
+    })();
+    return () => { alive = false; };
+  }, [projectDir]);
   /* Copper UI 预览面板：宽度可拖，默认占编辑区一半；文档页（教程/设置）占用时自动收起 */
   const [cuiW, setCuiW] = useState(480);
   const [docActive, setDocActive] = useState(false);
@@ -402,6 +425,7 @@ export function Workspace({ projectDir, initialFile, onOpenTarget, onExit }: Pro
     if (src === null) return;
     setPanelFile(path);
     setPanelSrc(src);
+    setPreviewSrc(src);
     const idx = indexRef.current;
     if (!idx) return;
     // 刷索引：内容没变就别重复 analyze（打字时 280ms 一刷，不防抖会卡）
@@ -1470,8 +1494,9 @@ export function Workspace({ projectDir, initialFile, onOpenTarget, onExit }: Pro
             {/* .cui 文件：编辑区左边并排一块实时预览，右边的 IDE 一点没少 */}
             <div className="ws-cui-slot" style={cuiFile ? { width: cuiW } : { display: 'none' }}>
               <CuiPane
-                code={cuiFile ? panelSrc : ''}
+                code={cuiFile ? previewSrc : ''}
                 preview={cuiLogic}
+                data={previewData}
                 frameKey={cuiFile ?? 'none'}
                 onPatch={patchCui}
               />
@@ -1500,6 +1525,7 @@ export function Workspace({ projectDir, initialFile, onOpenTarget, onExit }: Pro
                 syncPanel();
               }}
               onBuffersChange={syncPanel}
+              onSourceChange={(_path, text) => setPreviewSrc(text)}
               onViewChange={() => setDocActive((bus.current.editor?.activeDocId?.() ?? null) !== null)}
             />
             </div>

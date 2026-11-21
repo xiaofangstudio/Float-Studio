@@ -238,11 +238,15 @@ type Props = {
    *  右侧大纲、搜索索引这些"读内存"的 UI 全靠它触发刷新，
    *  谁也不许再回头读磁盘上的旧文件。 */
   onBuffersChange?: () => void;
+  /** 当前文件内容变了（每次输入立即触发）：预览要用它实时更新。
+   *  和 onBuffersChange 分开——索引/大纲那是重活，可以 280ms 再刷；
+   *  预览晚 280ms 就会像"左边没反应"。 */
+  onSourceChange?: (path: string, text: string) => void;
   /** 视图从文件切到文档页（或切回来）：上层据此决定要不要继续显示预览面板 */
   onViewChange?: () => void;
 };
 
-export function EditorPane({ projectDir, bus, onSaved, onDirtyChange, breakpoints, execPos, onCursor, onProblems, onActiveFile, onBuffersChange, onViewChange }: Props) {
+export function EditorPane({ projectDir, bus, onSaved, onDirtyChange, breakpoints, execPos, onCursor, onProblems, onActiveFile, onBuffersChange, onSourceChange, onViewChange }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const diffHostRef = useRef<HTMLDivElement>(null);
   const edRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -687,6 +691,8 @@ export function EditorPane({ projectDir, bus, onSaved, onDirtyChange, breakpoint
   /* 回调走 ref：onDidChangeContent 闭包是模型级长命的，别让它拖住最新 props */
   const buffersChangeRef = useRef(onBuffersChange);
   buffersChangeRef.current = onBuffersChange;
+  const sourceChangeRef = useRef(onSourceChange);
+  sourceChangeRef.current = onSourceChange;
 
   const notifyActive = useCallback((p: string | null): void => {
     onActiveFile?.(p ? (p.split(/[\\/]/).pop() ?? '') : '');
@@ -726,10 +732,12 @@ export function EditorPane({ projectDir, bus, onSaved, onDirtyChange, breakpoint
         void api.fsStat(path).then((st) => { if (st.exists) versionRef.current.set(path, st.mtimeMs); }).catch(() => {});
         m.onDidChangeContent(() => {
           setDirty((s) => new Set(s).add(path));
+          /* 预览要跟手：内容一变就把缓冲区丢给上层，不等 280ms 的诊断节流。 */
+          sourceChangeRef.current?.(path, m.getValue());
           if (timer) window.clearTimeout(timer);
           timer = window.setTimeout(() => {
             validateModel(m); reportProblems(m, path);
-            // 缓冲区内容变了：大纲 / 搜索索引跟着内存走，不等保存
+            // 大纲 / 搜索索引是重活，280ms 合并一次就够
             buffersChangeRef.current?.();
           }, 280);
           // 自动保存（设置里可关）——走和手动保存同一条串行通道，避免互相踩

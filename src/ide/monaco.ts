@@ -430,6 +430,9 @@ export function registerCuiLanguage(): void {
   monaco.languages.registerColorProvider(CUI_LANG, {
     provideDocumentColors(model) {
       const out: monaco.languages.IColorInformation[] = [];
+      /* 模型可能已经被 closeDoc / 切文件销毁。Monaco 在被销毁的 model 上取
+         位置会直接抛 "Model is disposed!"，把整个界面打崩——先检查再干活。 */
+      if (model.isDisposed()) return out;
       const text = model.getValue();
       /* 超大 .cui 保护：装饰器上限 2000 个，超过就不再扫。
          几万个色块本来也看不清，继续扫只会拖慢每一次输入。 */
@@ -437,7 +440,7 @@ export function registerCuiLanguage(): void {
       const re = /#[0-9a-fA-F]{3,8}\b/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(text)) !== null) {
-        if (out.length >= MAX) break;
+        if (out.length >= MAX || model.isDisposed()) break;
         const color = parseHex(m[0]);
         if (!color) continue;
         const start = model.getPositionAt(m.index);
@@ -454,6 +457,7 @@ export function registerCuiLanguage(): void {
   /* ── 悬停文档 ── */
   monaco.languages.registerHoverProvider(CUI_LANG, {
     provideHover(model, position) {
+      if (model.isDisposed()) return null;
       /* 十六进制色值：悬停给色值、RGB 与操作提示；色块点击出取色器 */
       const lineText = model.getLineContent(position.lineNumber);
       const hexRe = /#([0-9a-fA-F]{3,8})\b/g;
